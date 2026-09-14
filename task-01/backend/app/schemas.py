@@ -1,7 +1,25 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+class PaymentCreate(BaseModel):
+    outcome: Literal["SUCCESS", "FAILED", "TIMEOUT"]
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=100
+    )
+
+
+class PaymentResponse(BaseModel):
+    id: int
+    order_id: int
+    idempotency_key: str
+    outcome: str
+    amount: float
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 class ProductCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)

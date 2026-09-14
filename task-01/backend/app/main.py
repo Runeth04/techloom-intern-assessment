@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from app import models
 from app.database import Base, engine
-from app.routers import orders, products
+from app.routers import orders, payments, products
 from app.services.reservations import expire_reservations_once
 
 
@@ -49,6 +49,7 @@ app = FastAPI(
 
 app.include_router(products.router)
 app.include_router(orders.router)
+app.include_router(payments.router)
 
 
 @app.get("/")
