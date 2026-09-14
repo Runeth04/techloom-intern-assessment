@@ -190,6 +190,98 @@ def checkout_order(
 
     return reserved_order
 
+@router.post(
+    "/{order_id}/cancel",
+    response_model=OrderResponse
+)
+def cancel_order(
+    order_id: int,
+    db: Session = Depends(get_db)
+):
+    order = db.scalar(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(Order.id == order_id)
+        .with_for_update()
+    )
+
+    if order is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found"
+        )
+
+    if order.status == OrderStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Order is already cancelled"
+        )
+
+    if order.status in {
+        OrderStatus.FAILED,
+        OrderStatus.EXPIRED
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Order cannot be cancelled from "
+                f"status {order.status.value}"
+            )
+        )
+
+    # Stock was already deducted for RESERVED and PAID orders.
+    if order.status in {
+        OrderStatus.RESERVED,
+        OrderStatus.PAID
+    }:
+        quantities_to_restore = {}
+
+        for item in order.items:
+            quantities_to_restore[item.product_id] = (
+                quantities_to_restore.get(
+                    item.product_id,
+                    0
+                )
+                + item.quantity
+            )
+
+        product_ids = sorted(
+            quantities_to_restore.keys()
+        )
+
+        products = db.scalars(
+            select(Product)
+            .where(Product.id.in_(product_ids))
+            .order_by(Product.id)
+            .with_for_update()
+        ).all()
+
+        product_map = {
+            product.id: product
+            for product in products
+        }
+
+        for product_id, quantity in (
+            quantities_to_restore.items()
+        ):
+            product = product_map.get(product_id)
+
+            if product is not None:
+                product.stock_quantity += quantity
+
+    order.status = OrderStatus.CANCELLED
+    order.reservation_expires_at = None
+
+    db.commit()
+
+    cancelled_order = db.scalar(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(Order.id == order_id)
+    )
+
+    return cancelled_order
+
 @router.get(
     "/{order_id}",
     response_model=OrderResponse
