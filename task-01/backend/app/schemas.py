@@ -49,6 +49,10 @@ class OrderItemCreate(BaseModel):
 
 
 class OrderCreate(BaseModel):
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=100
+    )
     items: list[OrderItemCreate]
 
 
@@ -63,6 +67,7 @@ class OrderItemResponse(BaseModel):
 
 class OrderResponse(BaseModel):
     id: int
+    idempotency_key: str | None
     status: str
     total_amount: float
     reservation_expires_at: datetime | None

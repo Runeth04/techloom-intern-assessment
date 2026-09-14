@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models import Order, OrderItem, OrderStatus, Product
@@ -29,31 +30,72 @@ def create_order(
             detail="Order must contain at least one item"
         )
 
+    # Check whether this cart/order submission
+    # has already been processed.
+    existing_order = db.scalar(
+        select(Order).where(
+            Order.idempotency_key
+            == order_data.idempotency_key
+        )
+    )
+
+    if existing_order is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Duplicate order submission"
+        )
+
     order = Order(
+        idempotency_key=order_data.idempotency_key,
         status=OrderStatus.PENDING,
         total_amount=0
     )
 
     db.add(order)
-    db.flush()
+
+    # Database-level duplicate protection.
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Duplicate order submission"
+        )
 
     total_amount = 0
 
     for item_data in order_data.items:
-        product = db.get(Product, item_data.product_id)
+        product = db.get(
+            Product,
+            item_data.product_id
+        )
 
         if product is None:
             db.rollback()
+
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product {item_data.product_id} not found"
+                detail=(
+                    f"Product "
+                    f"{item_data.product_id} "
+                    f"not found"
+                )
             )
 
-        if product.stock_quantity < item_data.quantity:
+        if (
+            product.stock_quantity
+            < item_data.quantity
+        ):
             db.rollback()
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock for {product.name}"
+                detail=(
+                    f"Insufficient stock for "
+                    f"{product.name}"
+                )
             )
 
         order_item = OrderItem(
@@ -65,7 +107,10 @@ def create_order(
 
         db.add(order_item)
 
-        total_amount += float(product.price) * item_data.quantity
+        total_amount += (
+            float(product.price)
+            * item_data.quantity
+        )
 
     order.total_amount = total_amount
 

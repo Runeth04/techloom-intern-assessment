@@ -68,6 +68,13 @@ class Order(Base):
         index=True
     )
 
+    idempotency_key: Mapped[str | None] = mapped_column(
+    String(100),
+    unique=True,
+    nullable=True,
+    index=True
+    )
+
     status: Mapped[OrderStatus] = mapped_column(
         Enum(OrderStatus),
         default=OrderStatus.PENDING,
