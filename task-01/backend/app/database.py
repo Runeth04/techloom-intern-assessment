@@ -9,6 +9,13 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 load_dotenv()
 
 
+database_query = {}
+db_sslmode = os.getenv("DB_SSLMODE")
+
+if db_sslmode:
+    database_query["sslmode"] = db_sslmode
+
+
 DATABASE_URL = URL.create(
     drivername="postgresql+psycopg",
     username=os.getenv("DB_USER"),
@@ -16,6 +23,7 @@ DATABASE_URL = URL.create(
     host=os.getenv("DB_HOST"),
     port=int(os.getenv("DB_PORT", 5432)),
     database=os.getenv("DB_NAME"),
+    query=database_query,
 )
 
 

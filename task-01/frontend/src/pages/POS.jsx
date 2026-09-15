@@ -132,11 +132,13 @@ function POS() {
 
     try {
       const orderResponse = await api.post("/orders", {
+        idempotency_key: crypto.randomUUID(),
+
         items: cart.map((item) => ({
-          product_id: item.id,
-          quantity: item.quantity,
+            product_id: item.id,
+            quantity: item.quantity,
         })),
-      });
+        });
 
       createdOrderId = orderResponse.data.id;
 
@@ -155,11 +157,16 @@ function POS() {
     } catch (error) {
       console.error(error);
 
-      const detail =
-        error.response?.data?.detail ||
-        "Checkout failed.";
+      const errorDetail = error.response?.data?.detail;
 
-      setMessage(detail);
+        const detail =
+        typeof errorDetail === "string"
+            ? errorDetail
+            : Array.isArray(errorDetail)
+            ? errorDetail.map((item) => item.msg).join(", ")
+            : "Checkout failed.";
+
+        setMessage(detail);
 
       if (createdOrderId) {
         try {
