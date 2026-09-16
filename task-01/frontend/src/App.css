@@ -238,6 +238,13 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+.active-reservations {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
 .pos-products-section {
   padding: 24px;
 }

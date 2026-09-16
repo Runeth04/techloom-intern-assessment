@@ -6,9 +6,9 @@ function POS() {
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [paymentProcessingId, setPaymentProcessingId] = useState(null);
   const [message, setMessage] = useState("");
-  const [reservedOrder, setReservedOrder] = useState(null);
+  const [activeReservations, setActiveReservations] = useState([]);
 
   const loadProducts = async () => {
     try {
@@ -22,8 +22,30 @@ function POS() {
     }
   };
 
+  const loadActiveReservations = async () => {
+  try {
+    const response = await api.get("/orders");
+
+    const reservedOrders = response.data
+      .filter((order) => order.status === "RESERVED")
+      .sort((a, b) => b.id - a.id);
+
+      setActiveReservations(reservedOrders);
+    } catch (error) {
+      console.error("Could not load active reservations:", error);
+    }
+  };
+
   useEffect(() => {
+  loadProducts();
+  loadActiveReservations();
+
+  const interval = setInterval(() => {
     loadProducts();
+    loadActiveReservations();
+  }, 10000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const addToCart = (product) => {
@@ -146,14 +168,16 @@ function POS() {
         `/orders/${createdOrderId}/checkout`
       );
 
-      setReservedOrder(checkoutResponse.data);
       setCart([]);
+
+      await loadActiveReservations();
 
       setMessage(
         `Order #${createdOrderId} created and stock reserved successfully.`
       );
 
       await loadProducts();
+await loadActiveReservations();
     } catch (error) {
       console.error(error);
 
@@ -187,75 +211,60 @@ function POS() {
     }
   };
 
-  const handlePayment = async (outcome) => {
-  if (!reservedOrder) {
-    return;
-  }
-
-  setPaymentProcessing(true);
+  const handlePayment = async (orderId, outcome) => {
+  setPaymentProcessingId(orderId);
   setMessage("");
 
   try {
     const idempotencyKey =
-      `order-${reservedOrder.id}-${crypto.randomUUID()}`;
+      `order-${orderId}-${crypto.randomUUID()}`;
 
     await api.post(
-      `/payments/orders/${reservedOrder.id}`,
+      `/payments/orders/${orderId}`,
       {
         outcome,
         idempotency_key: idempotencyKey,
       }
     );
 
-    const orderResponse = await api.get(
-      `/orders/${reservedOrder.id}`
-    );
-
-    setReservedOrder(orderResponse.data);
-
     if (outcome === "SUCCESS") {
       setMessage(
-        `Payment successful. Order #${reservedOrder.id} is now PAID.`
+        `Payment successful. Order #${orderId} is now PAID.`
       );
     }
 
     if (outcome === "FAILED") {
       setMessage(
-        `Payment failed. Order #${reservedOrder.id} has been marked FAILED and stock was restored.`
+        `Payment failed. Order #${orderId} has been marked FAILED and stock was restored.`
       );
     }
 
     if (outcome === "TIMEOUT") {
       setMessage(
-        `Payment timed out. Order #${reservedOrder.id} has expired and stock was restored.`
+        `Payment timed out. Order #${orderId} has expired and stock was restored.`
       );
     }
 
     await loadProducts();
+    await loadActiveReservations();
   } catch (error) {
     console.error(error);
 
+    const errorDetail = error.response?.data?.detail;
+
     const detail =
-      error.response?.data?.detail ||
-      "Payment processing failed.";
+      typeof errorDetail === "string"
+        ? errorDetail
+        : "Payment processing failed.";
 
     setMessage(detail);
 
-    try {
-      const orderResponse = await api.get(
-        `/orders/${reservedOrder.id}`
-      );
-
-      setReservedOrder(orderResponse.data);
-    } catch (orderError) {
-      console.error(orderError);
+      await loadProducts();
+      await loadActiveReservations();
+    } finally {
+      setPaymentProcessingId(null);
     }
-
-    await loadProducts();
-  } finally {
-    setPaymentProcessing(false);
-  }
-};
+  };
 
   if (loading) {
     return <h2>Loading POS...</h2>;
@@ -278,87 +287,94 @@ function POS() {
         </div>
       )}
 
-      {reservedOrder && (
-  <div className="reservation-card">
-    <div className="reservation-details">
-      <span className="reservation-label">
-        {reservedOrder.status === "RESERVED"
-          ? "Active Reservation"
-          : "Order Result"}
-      </span>
+      {activeReservations.length > 0 && (
+        <div className="active-reservations">
+          {activeReservations.map((reservation) => (
+            <div
+              className="reservation-card"
+              key={reservation.id}
+            >
+              <div className="reservation-details">
+                <span className="reservation-label">
+                  Active Reservation
+                </span>
 
-      <h3>Order #{reservedOrder.id}</h3>
+                <h3>Order #{reservation.id}</h3>
 
-      <p>
-        Status:{" "}
-        <strong>{reservedOrder.status}</strong>
-      </p>
+                <p>
+                  Status:{" "}
+                  <strong>{reservation.status}</strong>
+                </p>
 
-      <p>
-        Total: Rs.{" "}
-        {Number(
-          reservedOrder.total_amount
-        ).toFixed(2)}
-      </p>
+                <p>
+                  Total: Rs.{" "}
+                  {Number(
+                    reservation.total_amount
+                  ).toFixed(2)}
+                </p>
 
-      {reservedOrder.status === "RESERVED" && (
-        <p>
-          Stock is reserved for 5 minutes while
-          payment is completed.
-        </p>
-      )}
-    </div>
+                <p>
+                  Stock is reserved for 5 minutes while
+                  payment is completed.
+                </p>
+              </div>
 
-    {reservedOrder.status === "RESERVED" ? (
-      <div className="payment-section">
-        <span>Mock Payment Gateway</span>
+              <div className="payment-section">
+                <span>Mock Payment Gateway</span>
 
-        <div className="payment-buttons">
-          <button
-            className="payment-success"
-            disabled={paymentProcessing}
-            onClick={() =>
-              handlePayment("SUCCESS")
-            }
-          >
-            {paymentProcessing
-              ? "Processing..."
-              : "Payment Success"}
-          </button>
+                <div className="payment-buttons">
+                  <button
+                    className="payment-success"
+                    disabled={
+                      paymentProcessingId === reservation.id
+                    }
+                    onClick={() =>
+                      handlePayment(
+                        reservation.id,
+                        "SUCCESS"
+                      )
+                    }
+                  >
+                    {paymentProcessingId === reservation.id
+                      ? "Processing..."
+                      : "Payment Success"}
+                  </button>
 
-          <button
-            className="payment-failed"
-            disabled={paymentProcessing}
-            onClick={() =>
-              handlePayment("FAILED")
-            }
-          >
-            Payment Failed
-          </button>
+                  <button
+                    className="payment-failed"
+                    disabled={
+                      paymentProcessingId === reservation.id
+                    }
+                    onClick={() =>
+                      handlePayment(
+                        reservation.id,
+                        "FAILED"
+                      )
+                    }
+                  >
+                    Payment Failed
+                  </button>
 
-          <button
-            className="payment-timeout"
-            disabled={paymentProcessing}
-            onClick={() =>
-              handlePayment("TIMEOUT")
-            }
-          >
-            Payment Timeout
-          </button>
+                  <button
+                    className="payment-timeout"
+                    disabled={
+                      paymentProcessingId === reservation.id
+                    }
+                    onClick={() =>
+                      handlePayment(
+                        reservation.id,
+                        "TIMEOUT"
+                      )
+                    }
+                  >
+                    Payment Timeout
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
-      </div>
-    ) : (
-      <button
-        className="secondary-button"
-        onClick={() =>
-          setReservedOrder(null)
-        }
-      >
-        Close
-      </button>
-        )}
-    </div>
-    )}
+      )}
 
       <div className="pos-layout">
         <section className="pos-products-section">
