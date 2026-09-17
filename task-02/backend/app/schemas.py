@@ -95,3 +95,96 @@ class ProductResponse(BaseModel):
     model_config = ConfigDict(
         from_attributes=True
     )
+
+# -------------------------
+# Checkout / Order Schemas
+# -------------------------
+
+class CheckoutItemCreate(BaseModel):
+    product_id: int
+    quantity: int = Field(gt=0)
+
+
+class CheckoutCreate(BaseModel):
+    checkout_session_key: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    customer_name: str = Field(
+        min_length=1,
+        max_length=150,
+    )
+
+    customer_email: str = Field(
+        min_length=3,
+        max_length=200,
+    )
+
+    items: list[CheckoutItemCreate]
+
+
+class OrderItemResponse(BaseModel):
+    id: int
+    product_id: int
+    product_name: str
+    quantity: int
+    unit_price: Decimal
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+
+class OrderStatusHistoryResponse(BaseModel):
+    id: int
+    from_status: str | None
+    to_status: str
+    reason: str | None
+    created_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+
+class OrderResponse(BaseModel):
+    id: int
+    checkout_session_key: str
+    customer_name: str
+    customer_email: str
+    status: str
+    total_amount: Decimal
+    reservation_expires_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    items: list[OrderItemResponse]
+    status_history: list[OrderStatusHistoryResponse]
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+# -------------------------
+# Payment Schemas
+# -------------------------
+
+class PaymentCreate(BaseModel):
+    outcome: str
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+
+class PaymentResponse(BaseModel):
+    id: int
+    order_id: int
+    idempotency_key: str
+    outcome: str
+    amount: Decimal
+    created_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
