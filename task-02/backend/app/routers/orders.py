@@ -21,17 +21,51 @@ from app.models import (
     OrderStatus,
     OrderStatusHistory,
     Product,
+    Refund,
+    RefundStatus,
 )
 from app.schemas import (
     CheckoutCreate,
     OrderResponse,
 )
 
-
 router = APIRouter(
     prefix="/orders",
     tags=["Orders"],
 )
+
+
+def restore_order_stock(
+    db: Session,
+    order: Order,
+):
+    quantities = {}
+
+    for item in order.items:
+        quantities[item.product_id] = (
+            quantities.get(item.product_id, 0)
+            + item.quantity
+        )
+
+    product_ids = sorted(quantities.keys())
+
+    products = db.scalars(
+        select(Product)
+        .where(Product.id.in_(product_ids))
+        .order_by(Product.id)
+        .with_for_update()
+    ).all()
+
+    product_map = {
+        product.id: product
+        for product in products
+    }
+
+    for product_id, quantity in quantities.items():
+        product = product_map.get(product_id)
+
+        if product is not None:
+            product.stock_quantity += quantity
 
 
 @router.post(
@@ -196,6 +230,7 @@ def checkout(
         .options(
             selectinload(Order.items),
             selectinload(Order.status_history),
+            selectinload(Order.refunds),
         )
         .where(Order.id == order.id)
     )
@@ -215,12 +250,129 @@ def get_orders(
         .options(
             selectinload(Order.items),
             selectinload(Order.status_history),
+            selectinload(Order.refunds),
         )
         .order_by(Order.id.desc())
     ).all()
 
     return orders
 
+@router.post(
+    "/{order_id}/cancel",
+    response_model=OrderResponse,
+)
+def cancel_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+):
+    order = db.scalar(
+        select(Order)
+        .options(
+            selectinload(Order.items),
+            selectinload(Order.status_history),
+            selectinload(Order.refunds),
+        )
+        .where(Order.id == order_id)
+        .with_for_update()
+    )
+
+    if order is None:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found",
+        )
+
+    if order.status not in (
+        OrderStatus.RESERVED,
+        OrderStatus.PAID,
+    ):
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Only RESERVED or PAID "
+                "orders can be cancelled"
+            ),
+        )
+
+    previous_status = order.status
+
+    restore_order_stock(
+        db,
+        order,
+    )
+
+    order.reservation_expires_at = None
+
+    if previous_status == OrderStatus.RESERVED:
+        order.status = OrderStatus.CANCELLED
+
+        db.add(
+            OrderStatusHistory(
+                order_id=order.id,
+                from_status=previous_status,
+                to_status=OrderStatus.CANCELLED,
+                reason=(
+                    "Order cancelled before payment; "
+                    "reserved stock restored"
+                ),
+            )
+        )
+
+    elif previous_status == OrderStatus.PAID:
+        order.status = OrderStatus.CANCELLED
+
+        db.add(
+            OrderStatusHistory(
+                order_id=order.id,
+                from_status=OrderStatus.PAID,
+                to_status=OrderStatus.CANCELLED,
+                reason=(
+                    "Paid order cancelled; "
+                    "stock restored"
+                ),
+            )
+        )
+
+        refund = Refund(
+            order_id=order.id,
+            amount=order.total_amount,
+            status=RefundStatus.COMPLETED,
+            reason=(
+                "Mock refund for cancelled "
+                "paid order"
+            ),
+        )
+
+        db.add(refund)
+
+        order.status = OrderStatus.REFUNDED
+
+        db.add(
+            OrderStatusHistory(
+                order_id=order.id,
+                from_status=OrderStatus.CANCELLED,
+                to_status=OrderStatus.REFUNDED,
+                reason="Mock refund completed",
+            )
+        )
+
+    db.commit()
+
+    updated_order = db.scalar(
+        select(Order)
+        .options(
+            selectinload(Order.items),
+            selectinload(Order.status_history),
+            selectinload(Order.refunds),
+        )
+        .where(Order.id == order_id)
+    )
+
+    return updated_order
 
 @router.get(
     "/{order_id}",
@@ -235,6 +387,7 @@ def get_order(
         .options(
             selectinload(Order.items),
             selectinload(Order.status_history),
+            selectinload(Order.refunds),
         )
         .where(Order.id == order_id)
     )
