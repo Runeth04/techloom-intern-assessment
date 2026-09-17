@@ -5,6 +5,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     status,
 )
 from sqlalchemy import select
@@ -243,16 +244,28 @@ def checkout(
     response_model=list[OrderResponse],
 )
 def get_orders(
+    customer_email: str | None = Query(
+        default=None
+    ),
     db: Session = Depends(get_db),
 ):
-    orders = db.scalars(
+    query = (
         select(Order)
         .options(
             selectinload(Order.items),
             selectinload(Order.status_history),
             selectinload(Order.refunds),
         )
-        .order_by(Order.id.desc())
+    )
+
+    if customer_email:
+        query = query.where(
+            Order.customer_email
+            == customer_email.strip()
+        )
+
+    orders = db.scalars(
+        query.order_by(Order.id.desc())
     ).all()
 
     return orders
